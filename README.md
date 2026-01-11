@@ -60,4 +60,4 @@ Steps to run the project locally:
 - Basil S
 - Chacko P Abraham
 - Harshal S Poojary
-- Nischal Nandish
+- Nishchal Nandish
