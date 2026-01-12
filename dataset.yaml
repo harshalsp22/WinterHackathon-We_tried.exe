@@ -1,0 +1,11 @@
+# YOLO Dataset Configuration
+path: D:\We_tried.exe\processed_yolo_dataset
+train: images/train
+val: images/val
+test: images/test
+
+# Number of classes (update this based on your dataset)
+nc: 1
+
+# Class names (update this based on your dataset)
+names: ['object']
