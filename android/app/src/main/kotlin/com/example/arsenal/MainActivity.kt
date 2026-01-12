@@ -1,4 +1,4 @@
-package com.example.we_tried.exe.arsenal
+package com.example.arsenal
 
 import io.flutter.embedding.android.FlutterActivity
 
