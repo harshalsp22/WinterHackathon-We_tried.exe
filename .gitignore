@@ -63,3 +63,5 @@ web/.dart_tool/
 # =========================
 app.*.symbols
 app.*.map.json
+
+.env

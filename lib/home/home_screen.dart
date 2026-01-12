@@ -23,6 +23,7 @@ class _HomeScreenState extends State<HomeScreen> {
       'G15 Gaming',
     ],
     'HP': [
+      '15s',
       'Pavilion 14',
       'Victus 16',
       'Omen 15',
