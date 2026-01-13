@@ -1,12 +1,9 @@
 import 'dart:async';
-import 'dart:math';
 import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import '../models/diagnostic_plan.dart';
 import '../services/yolo_service.dart';
-import '../services/detection_stabilizer.dart';
-import '../widgets/ar_component_overlay.dart';
 
 class ARCameraScreen extends StatefulWidget {
   final DiagnosticPlan plan;
@@ -22,45 +19,30 @@ class ARCameraScreen extends StatefulWidget {
   State<ARCameraScreen> createState() => _ARCameraScreenState();
 }
 
-class _ARCameraScreenState extends State<ARCameraScreen>
-    with TickerProviderStateMixin {
+class _ARCameraScreenState extends State<ARCameraScreen> {
   CameraController? _cameraController;
   late YoloService _yoloService;
-  late DetectionStabilizer _stabilizer;
+
+  // Detection with stabilization
+  List<StableDetection> _stableDetections = [];
+  Map<String, StableDetection> _detectionHistory = {};
 
   bool _isDetecting = false;
   bool _isInitialized = false;
   int _currentStepIndex = 0;
   Timer? _detectionTimer;
 
-  // Debug
   String _serverStatus = 'Connecting...';
   int _framesSent = 0;
-  bool _showDebugPanel = false;
-  bool _demoMode = false;
+  bool _showDebugPanel = true;
 
   Size _imageSize = const Size(640, 480);
   bool _componentFound = false;
-
-  // Scanning animation
-  late AnimationController _gridAnimController;
 
   @override
   void initState() {
     super.initState();
     _yoloService = YoloService(baseUrl: widget.yoloServerUrl);
-    _stabilizer = DetectionStabilizer(
-      minFramesToStabilize: 3,
-      iouThreshold: 0.3,
-      maxAge: const Duration(milliseconds: 2000),
-      smoothingFactor: 0.4,
-    );
-
-    _gridAnimController = AnimationController(
-      duration: const Duration(seconds: 3),
-      vsync: this,
-    )..repeat();
-
     _initializeCamera();
   }
 
@@ -94,13 +76,15 @@ class _ARCameraScreenState extends State<ARCameraScreen>
 
   void _startDetectionLoop() {
     _detectionTimer = Timer.periodic(
-      const Duration(milliseconds: 500),
+      const Duration(milliseconds: 600), // Slower = more stable
           (_) => _captureAndDetect(),
     );
   }
 
   Future<void> _captureAndDetect() async {
-    if (_demoMode || _isDetecting || _cameraController == null) return;
+    if (_isDetecting || _cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
+    }
 
     _isDetecting = true;
 
@@ -110,25 +94,55 @@ class _ARCameraScreenState extends State<ARCameraScreen>
 
       setState(() => _framesSent++);
 
-      final response = await _yoloService.detectFromBytes(bytes);
+      // Use lower confidence for better detection
+      final response = await _yoloService.detectFromBytes(bytes, confidence: 0.15);
 
       if (response != null && mounted) {
-        _stabilizer.update(response.detections);
+        _updateStableDetections(response.detections);
 
         setState(() {
           _imageSize = Size(
             response.imageWidth.toDouble(),
             response.imageHeight.toDouble(),
           );
-          _serverStatus = '✅ Active';
+          _serverStatus = '✅ Active (${response.detections.length} raw)';
           _checkCurrentStepComponent();
         });
       }
     } catch (e) {
+      print('Detection error: $e');
       setState(() => _serverStatus = '❌ Error');
     } finally {
       _isDetecting = false;
     }
+  }
+
+  void _updateStableDetections(List<Detection> newDetections) {
+    final now = DateTime.now();
+
+    // Update existing or add new detections
+    for (final det in newDetections) {
+      final key = det.className;
+
+      if (_detectionHistory.containsKey(key)) {
+        // Update existing - smooth the position
+        final existing = _detectionHistory[key]!;
+        existing.update(det, now);
+      } else {
+        // Add new
+        _detectionHistory[key] = StableDetection.fromDetection(det, now);
+      }
+    }
+
+    // Remove old detections (not seen for 2 seconds)
+    _detectionHistory.removeWhere((key, det) {
+      return now.difference(det.lastSeen).inMilliseconds > 2000;
+    });
+
+    // Get stable detections (seen at least 2 times)
+    _stableDetections = _detectionHistory.values
+        .where((d) => d.hitCount >= 2)
+        .toList();
   }
 
   void _checkCurrentStepComponent() {
@@ -137,53 +151,9 @@ class _ARCameraScreenState extends State<ARCameraScreen>
     final currentStep = widget.plan.steps[_currentStepIndex];
     final targetComponent = currentStep.cameraFocus.toLowerCase();
 
-    _componentFound = _stabilizer.detections.any(
+    _componentFound = _stableDetections.any(
           (d) => d.className.toLowerCase().contains(targetComponent),
     );
-  }
-
-  void _addMockDetections() {
-    final screenSize = MediaQuery.of(context).size;
-    final random = Random();
-
-    final mockDetections = [
-      RawDetection(
-        className: 'RAM',
-        confidence: 0.92,
-        x1: (screenSize.width * 0.1).toInt(),
-        y1: (screenSize.height * 0.25).toInt(),
-        x2: (screenSize.width * 0.45).toInt(),
-        y2: (screenSize.height * 0.42).toInt(),
-      ),
-      RawDetection(
-        className: 'CPU',
-        confidence: 0.88,
-        x1: (screenSize.width * 0.5).toInt(),
-        y1: (screenSize.height * 0.2).toInt(),
-        x2: (screenSize.width * 0.9).toInt(),
-        y2: (screenSize.height * 0.4).toInt(),
-      ),
-      RawDetection(
-        className: 'SSD',
-        confidence: 0.85,
-        x1: (screenSize.width * 0.15).toInt(),
-        y1: (screenSize.height * 0.5).toInt(),
-        x2: (screenSize.width * 0.5).toInt(),
-        y2: (screenSize.height * 0.65).toInt(),
-      ),
-    ];
-
-    _stabilizer.update(mockDetections);
-    // Update multiple times to stabilize
-    _stabilizer.update(mockDetections);
-    _stabilizer.update(mockDetections);
-
-    setState(() {
-      _imageSize = screenSize;
-      _serverStatus = '🧪 Demo';
-      _demoMode = true;
-      _checkCurrentStepComponent();
-    });
   }
 
   void _nextStep() {
@@ -211,26 +181,15 @@ class _ARCameraScreenState extends State<ARCameraScreen>
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: Colors.grey[900],
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
+        title: const Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: const BoxDecoration(
-                color: Colors.green,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.check, color: Colors.white),
-            ),
-            const SizedBox(width: 12),
-            const Text(
-              'Complete!',
-              style: TextStyle(color: Colors.white, fontFamily: 'Quantico'),
-            ),
+            Icon(Icons.check_circle, color: Colors.green),
+            SizedBox(width: 8),
+            Text('Complete!', style: TextStyle(color: Colors.white)),
           ],
         ),
         content: const Text(
-          'All diagnostic steps completed successfully.',
+          'All diagnostic steps completed.',
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -239,17 +198,49 @@ class _ARCameraScreenState extends State<ARCameraScreen>
               Navigator.pop(context);
               Navigator.pop(context);
             },
-            child: const Text('DONE', style: TextStyle(color: Colors.green)),
+            child: const Text('Done', style: TextStyle(color: Colors.green)),
           ),
         ],
       ),
     );
   }
 
+  // Mock detections for testing
+  void _addMockDetections() {
+    final screenSize = MediaQuery.of(context).size;
+
+    setState(() {
+      _stableDetections = [
+        StableDetection(
+          className: 'RAM',
+          confidence: 0.92,
+          x1: screenSize.width * 0.1,
+          y1: screenSize.height * 0.25,
+          x2: screenSize.width * 0.45,
+          y2: screenSize.height * 0.40,
+          hitCount: 5,
+          lastSeen: DateTime.now(),
+        ),
+        StableDetection(
+          className: 'CPU',
+          confidence: 0.88,
+          x1: screenSize.width * 0.5,
+          y1: screenSize.height * 0.2,
+          x2: screenSize.width * 0.85,
+          y2: screenSize.height * 0.38,
+          hitCount: 5,
+          lastSeen: DateTime.now(),
+        ),
+      ];
+      _imageSize = screenSize;
+      _serverStatus = '🧪 Mock Mode';
+      _checkCurrentStepComponent();
+    });
+  }
+
   @override
   void dispose() {
     _detectionTimer?.cancel();
-    _gridAnimController.dispose();
     _cameraController?.dispose();
     super.dispose();
   }
@@ -267,24 +258,16 @@ class _ARCameraScreenState extends State<ARCameraScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const CircularProgressIndicator(color: Colors.cyan),
-          const SizedBox(height: 20),
-          const Text(
-            'Initializing AR Camera...',
-            style: TextStyle(color: Colors.white, fontFamily: 'Quantico'),
-          ),
-          const SizedBox(height: 30),
-          ElevatedButton.icon(
+          const CircularProgressIndicator(color: Colors.white),
+          const SizedBox(height: 16),
+          const Text('Initializing camera...', style: TextStyle(color: Colors.white)),
+          const SizedBox(height: 24),
+          ElevatedButton(
             onPressed: () {
               setState(() => _isInitialized = true);
               _addMockDetections();
             },
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Demo Mode'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.white,
-            ),
+            child: const Text('Use Demo Mode'),
           ),
         ],
       ),
@@ -294,201 +277,142 @@ class _ARCameraScreenState extends State<ARCameraScreen>
   Widget _buildARView() {
     final currentStep = widget.plan.steps[_currentStepIndex];
     final screenSize = MediaQuery.of(context).size;
-    final targetComponent = currentStep.cameraFocus.toLowerCase();
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Camera
-        if (_cameraController != null)
-          CameraPreview(_cameraController!),
+        // Camera Preview
+        if (_cameraController != null) CameraPreview(_cameraController!),
 
-        // Scanning grid overlay
-        AnimatedBuilder(
-          animation: _gridAnimController,
-          builder: (context, _) {
-            return CustomPaint(
-              size: Size.infinite,
-              painter: ScanGridPainter(
-                progress: _gridAnimController.value,
-                color: _componentFound ? Colors.green : Colors.cyan,
-              ),
-            );
-          },
-        ),
+        // Simple Bounding Boxes
+        ..._buildSimpleBoundingBoxes(screenSize, currentStep),
 
-        // AR Component Overlays
-        ..._stabilizer.detections.map((detection) {
-          final isTarget = detection.className.toLowerCase().contains(targetComponent);
-          return ARComponentOverlay(
-            key: ValueKey('${detection.className}_${detection.x1}'),
-            detection: detection,
-            isTarget: isTarget,
-            imageSize: _imageSize,
-            screenSize: screenSize,
-            onTap: () => _showComponentInfo(detection),
-          );
-        }),
-
-        // Top bar
+        // Top Bar
         _buildTopBar(),
 
-        // Debug panel
+        // Debug Panel
         if (_showDebugPanel) _buildDebugPanel(),
 
-        // Bottom panel
-        _buildBottomPanel(currentStep),
+        // Detected List
+        _buildDetectedList(),
 
-        // Status indicators
-        _buildStatusIndicators(),
+        // Bottom Panel
+        _buildBottomPanel(currentStep),
       ],
     );
   }
 
-  void _showComponentInfo(StabilizedDetection detection) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.grey[900],
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
+  List<Widget> _buildSimpleBoundingBoxes(Size screenSize, DiagnosticStep currentStep) {
+    if (_stableDetections.isEmpty) return [];
+
+    final targetComponent = currentStep.cameraFocus.toLowerCase();
+    final scaleX = screenSize.width / _imageSize.width;
+    final scaleY = screenSize.height / _imageSize.height;
+
+    return _stableDetections.map((det) {
+      final x = det.x1 * scaleX;
+      final y = det.y1 * scaleY;
+      final width = (det.x2 - det.x1) * scaleX;
+      final height = (det.y2 - det.y1) * scaleY;
+
+      final isTarget = det.className.toLowerCase().contains(targetComponent);
+      final color = isTarget ? Colors.green : _getColorForClass(det.className);
+
+      return Positioned(
+        left: x.clamp(0, screenSize.width - 50),
+        top: y.clamp(0, screenSize.height - 50),
+        child: Container(
+          width: width.clamp(60, screenSize.width - x),
+          height: height.clamp(60, screenSize.height - y),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: color,
+              width: isTarget ? 3 : 2,
+            ),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              // Label at top
+              Positioned(
+                top: -28,
+                left: 0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: _getColorForClass(detection.className).withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
+                    color: color,
+                    borderRadius: BorderRadius.circular(4),
                   ),
-                  child: Icon(
-                    _getIconForClass(detection.className),
-                    color: _getColorForClass(detection.className),
-                    size: 32,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
+                      Icon(
+                        _getIconForClass(det.className),
+                        color: Colors.white,
+                        size: 14,
+                      ),
+                      const SizedBox(width: 4),
                       Text(
-                        detection.className.toUpperCase(),
+                        '${det.className} ${(det.confidence * 100).toStringAsFixed(0)}%',
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 20,
+                          fontSize: 12,
                           fontWeight: FontWeight.bold,
-                          fontFamily: 'Quantico',
                         ),
-                      ),
-                      Text(
-                        'Confidence: ${(detection.confidence * 100).toStringAsFixed(1)}%',
-                        style: const TextStyle(color: Colors.white70),
                       ),
                     ],
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            _buildComponentDetails(detection.className),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _getColorForClass(detection.className),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-                child: const Text('CLOSE'),
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
-  Widget _buildComponentDetails(String className) {
-    final details = _getComponentDetails(className);
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            details['description'] ?? 'No description available',
-            style: const TextStyle(color: Colors.white70, fontSize: 14),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _infoChip(Icons.warning, details['warning'] ?? 'Handle with care'),
-              const SizedBox(width: 8),
-              _infoChip(Icons.build, details['tool'] ?? 'Screwdriver'),
+              // Center icon
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: color, width: 2),
+                  ),
+                  child: Icon(
+                    _getIconForClass(det.className),
+                    color: color,
+                    size: 24,
+                  ),
+                ),
+              ),
+
+              // Target arrow
+              if (isTarget)
+                Positioned(
+                  top: -50,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Column(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.green,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Text(
+                            'TARGET',
+                            style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        const Icon(Icons.arrow_drop_down, color: Colors.green, size: 20),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _infoChip(IconData icon, String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: Colors.white54),
-          const SizedBox(width: 4),
-          Text(text, style: const TextStyle(color: Colors.white54, fontSize: 12)),
-        ],
-      ),
-    );
-  }
-
-  Map<String, String> _getComponentDetails(String className) {
-    final name = className.toLowerCase();
-    if (name.contains('ram')) {
-      return {
-        'description': 'Random Access Memory - Temporary storage for active programs.',
-        'warning': 'ESD sensitive',
-        'tool': 'No tools needed',
-      };
-    }
-    if (name.contains('cpu')) {
-      return {
-        'description': 'Central Processing Unit - The brain of the computer.',
-        'warning': 'Apply thermal paste',
-        'tool': 'Thermal paste',
-      };
-    }
-    if (name.contains('ssd') || name.contains('hdd')) {
-      return {
-        'description': 'Storage drive for permanent data storage.',
-        'warning': 'Backup data first',
-        'tool': 'Screwdriver',
-      };
-    }
-    return {
-      'description': 'Computer component',
-      'warning': 'Handle carefully',
-      'tool': 'Screwdriver',
-    };
+        ),
+      );
+    }).toList();
   }
 
   Widget _buildTopBar() {
@@ -501,13 +425,13 @@ class _ARCameraScreenState extends State<ARCameraScreen>
           top: MediaQuery.of(context).padding.top + 8,
           left: 8,
           right: 8,
-          bottom: 12,
+          bottom: 8,
         ),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Colors.black.withOpacity(0.9), Colors.transparent],
+            colors: [Colors.black.withOpacity(0.8), Colors.transparent],
           ),
         ),
         child: Row(
@@ -517,26 +441,14 @@ class _ARCameraScreenState extends State<ARCameraScreen>
               onPressed: () => Navigator.pop(context),
             ),
             Expanded(
-              child: Column(
-                children: [
-                  Text(
-                    'STEP ${_currentStepIndex + 1} OF ${widget.plan.steps.length}',
-                    style: TextStyle(
-                      color: Colors.cyan[300],
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  LinearProgressIndicator(
-                    value: (_currentStepIndex + 1) / widget.plan.steps.length,
-                    backgroundColor: Colors.white24,
-                    valueColor: AlwaysStoppedAnimation(
-                      _componentFound ? Colors.green : Colors.cyan,
-                    ),
-                  ),
-                ],
+              child: Text(
+                'Step ${_currentStepIndex + 1} / ${widget.plan.steps.length}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
             IconButton(
@@ -558,22 +470,66 @@ class _ARCameraScreenState extends State<ARCameraScreen>
 
   Widget _buildDebugPanel() {
     return Positioned(
-      top: MediaQuery.of(context).padding.top + 70,
+      top: MediaQuery.of(context).padding.top + 60,
       left: 10,
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.85),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.cyan.withOpacity(0.5)),
+          color: Colors.black.withOpacity(0.8),
+          borderRadius: BorderRadius.circular(8),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('SERVER: $_serverStatus', style: const TextStyle(color: Colors.white, fontSize: 11)),
-            Text('FRAMES: $_framesSent', style: const TextStyle(color: Colors.white, fontSize: 11)),
-            Text('STABLE: ${_stabilizer.detections.length}', style: const TextStyle(color: Colors.white, fontSize: 11)),
-            Text('TRACKING: ${_stabilizer.allDetections.length}', style: const TextStyle(color: Colors.white, fontSize: 11)),
+            Text('Server: $_serverStatus', style: const TextStyle(color: Colors.white, fontSize: 11)),
+            Text('Frames: $_framesSent', style: const TextStyle(color: Colors.white, fontSize: 11)),
+            Text('Stable: ${_stableDetections.length}', style: const TextStyle(color: Colors.white, fontSize: 11)),
+            Text('Tracking: ${_detectionHistory.length}', style: const TextStyle(color: Colors.white, fontSize: 11)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetectedList() {
+    return Positioned(
+      top: MediaQuery.of(context).padding.top + 60,
+      right: 10,
+      child: Container(
+        width: 120,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.8),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Detected:', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+            const Divider(color: Colors.white24),
+            if (_stableDetections.isEmpty)
+              const Text('Scanning...', style: TextStyle(color: Colors.white54, fontSize: 11))
+            else
+              ..._stableDetections.map((d) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    Icon(
+                      _getIconForClass(d.className),
+                      color: _getColorForClass(d.className),
+                      size: 12,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        d.className,
+                        style: const TextStyle(color: Colors.white, fontSize: 11),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              )),
           ],
         ),
       ),
@@ -588,160 +544,131 @@ class _ARCameraScreenState extends State<ARCameraScreen>
       child: Container(
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).padding.bottom + 16,
-          left: 20,
-          right: 20,
-          top: 24,
+          left: 16,
+          right: 16,
+          top: 16,
         ),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
-            colors: [Colors.black, Colors.black.withOpacity(0.8), Colors.transparent],
+            colors: [Colors.black.withOpacity(0.95), Colors.transparent],
           ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Found indicator
+            // Found badge
             if (_componentFound)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                margin: const EdgeInsets.only(bottom: 12),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF00C853), Color(0xFF00E676)],
-                  ),
-                  borderRadius: BorderRadius.circular(30),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.green.withOpacity(0.4),
-                      blurRadius: 15,
-                      spreadRadius: 2,
-                    ),
-                  ],
+                  color: Colors.green,
+                  borderRadius: BorderRadius.circular(20),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.check_circle, color: Colors.white),
+                    const Icon(Icons.check_circle, color: Colors.white, size: 18),
                     const SizedBox(width: 8),
                     Text(
-                      '${currentStep.cameraFocus} DETECTED',
+                      '${currentStep.cameraFocus} FOUND!',
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
-                        fontFamily: 'Quantico',
-                        letterSpacing: 1,
                       ),
                     ),
                   ],
                 ),
               ),
 
-            // Step info
+            // Title
             Text(
               currentStep.title,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 22,
+                fontSize: 18,
                 fontWeight: FontWeight.bold,
-                fontFamily: 'Quantico',
               ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
+
+            // Description
             Text(
               currentStep.description,
-              style: const TextStyle(color: Colors.white60, fontSize: 14),
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
               textAlign: TextAlign.center,
-              maxLines: 2,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
 
-            // Target badge
+            // Target hint
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                border: Border.all(color: Colors.cyan),
-                borderRadius: BorderRadius.circular(25),
+                border: Border.all(color: Colors.blue),
+                borderRadius: BorderRadius.circular(20),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.gps_fixed, color: Colors.cyan, size: 18),
-                  const SizedBox(width: 8),
-                  Text(
-                    'TARGET: ${currentStep.cameraFocus}',
-                    style: const TextStyle(
-                      color: Colors.cyan,
-                      fontFamily: 'Quantico',
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
+              child: Text(
+                '📷 Find: ${currentStep.cameraFocus}',
+                style: const TextStyle(color: Colors.blue, fontSize: 12),
               ),
             ),
 
-            const SizedBox(height: 20),
-
-            // Navigation
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _currentStepIndex > 0 ? _previousStep : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white.withOpacity(0.1),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+            // Safety warning
+            if (currentStep.safetyWarning.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning, color: Colors.red, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        currentStep.safetyWarning,
+                        style: const TextStyle(color: Colors.red, fontSize: 11),
                       ),
                     ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.arrow_back, size: 18),
-                        SizedBox(width: 8),
-                        Text('BACK'),
-                      ],
-                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 16),
+
+            // Navigation buttons
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _currentStepIndex > 0 ? _previousStep : null,
+                  icon: const Icon(Icons.arrow_back, size: 16),
+                  label: const Text('Previous'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey[800],
+                    foregroundColor: Colors.white,
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  flex: 2,
-                  child: ElevatedButton(
-                    onPressed: _nextStep,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _componentFound ? Colors.green : Colors.cyan,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          _currentStepIndex < widget.plan.steps.length - 1
-                              ? 'NEXT STEP'
-                              : 'COMPLETE',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontFamily: 'Quantico',
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Icon(
-                          _currentStepIndex < widget.plan.steps.length - 1
-                              ? Icons.arrow_forward
-                              : Icons.check,
-                          size: 18,
-                        ),
-                      ],
-                    ),
+                ElevatedButton.icon(
+                  onPressed: _nextStep,
+                  icon: Icon(
+                    _currentStepIndex < widget.plan.steps.length - 1
+                        ? Icons.arrow_forward
+                        : Icons.check,
+                    size: 16,
+                  ),
+                  label: Text(
+                    _currentStepIndex < widget.plan.steps.length - 1 ? 'Next' : 'Done',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _componentFound ? Colors.green : Colors.blue,
+                    foregroundColor: Colors.white,
                   ),
                 ),
               ],
@@ -752,70 +679,14 @@ class _ARCameraScreenState extends State<ARCameraScreen>
     );
   }
 
-  Widget _buildStatusIndicators() {
-    return Positioned(
-      right: 16,
-      top: MediaQuery.of(context).padding.top + 80,
-      child: Column(
-        children: [
-          _statusIndicator(
-            icon: Icons.wifi,
-            label: 'SERVER',
-            isActive: _serverStatus.contains('✅'),
-            color: Colors.green,
-          ),
-          const SizedBox(height: 8),
-          _statusIndicator(
-            icon: Icons.remove_red_eye,
-            label: '${_stabilizer.detections.length}',
-            isActive: _stabilizer.detections.isNotEmpty,
-            color: Colors.cyan,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _statusIndicator({
-    required IconData icon,
-    required String label,
-    required bool isActive,
-    required Color color,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.7),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: isActive ? color : Colors.white24,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: isActive ? color : Colors.white24),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: isActive ? color : Colors.white24,
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Color _getColorForClass(String className) {
     final name = className.toLowerCase();
-    if (name.contains('ram')) return const Color(0xFF00D4FF);
-    if (name.contains('cpu')) return const Color(0xFFFF4444);
-    if (name.contains('ssd')) return const Color(0xFFFF8800);
-    if (name.contains('battery')) return const Color(0xFFFFDD00);
-    if (name.contains('fan')) return const Color(0xFF00FFAA);
+    if (name.contains('ram')) return Colors.blue;
+    if (name.contains('cpu')) return Colors.red;
+    if (name.contains('ssd') || name.contains('hdd')) return Colors.orange;
+    if (name.contains('battery')) return Colors.yellow;
+    if (name.contains('fan')) return Colors.cyan;
+    if (name.contains('gpu')) return Colors.pink;
     return Colors.white;
   }
 
@@ -823,57 +694,54 @@ class _ARCameraScreenState extends State<ARCameraScreen>
     final name = className.toLowerCase();
     if (name.contains('ram')) return Icons.memory;
     if (name.contains('cpu')) return Icons.developer_board;
-    if (name.contains('ssd')) return Icons.storage;
+    if (name.contains('ssd') || name.contains('hdd')) return Icons.storage;
     if (name.contains('battery')) return Icons.battery_full;
     if (name.contains('fan')) return Icons.toys;
+    if (name.contains('gpu')) return Icons.videogame_asset;
     return Icons.memory;
   }
 }
 
-// Scanning grid overlay
-class ScanGridPainter extends CustomPainter {
-  final double progress;
-  final Color color;
+// Simple stable detection class
+class StableDetection {
+  String className;
+  double confidence;
+  double x1, y1, x2, y2;
+  int hitCount;
+  DateTime lastSeen;
 
-  ScanGridPainter({required this.progress, required this.color});
+  StableDetection({
+    required this.className,
+    required this.confidence,
+    required this.x1,
+    required this.y1,
+    required this.x2,
+    required this.y2,
+    required this.hitCount,
+    required this.lastSeen,
+  });
 
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color.withOpacity(0.1)
-      ..strokeWidth = 1;
-
-    // Horizontal lines
-    const spacing = 50.0;
-    for (double y = 0; y < size.height; y += spacing) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-
-    // Vertical lines
-    for (double x = 0; x < size.width; x += spacing) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-
-    // Scanning line
-    final scanY = size.height * progress;
-    final scanPaint = Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          Colors.transparent,
-          color.withOpacity(0.5),
-          color,
-          color.withOpacity(0.5),
-          Colors.transparent,
-        ],
-      ).createShader(Rect.fromLTWH(0, scanY - 30, size.width, 60));
-
-    canvas.drawRect(Rect.fromLTWH(0, scanY - 30, size.width, 60), scanPaint);
+  factory StableDetection.fromDetection(Detection det, DateTime now) {
+    return StableDetection(
+      className: det.className,
+      confidence: det.confidence,
+      x1: det.x1.toDouble(),
+      y1: det.y1.toDouble(),
+      x2: det.x2.toDouble(),
+      y2: det.y2.toDouble(),
+      hitCount: 1,
+      lastSeen: now,
+    );
   }
 
-  @override
-  bool shouldRepaint(covariant ScanGridPainter oldDelegate) {
-    return oldDelegate.progress != progress;
+  void update(Detection det, DateTime now) {
+    // Smooth position (70% old, 30% new)
+    x1 = x1 * 0.7 + det.x1 * 0.3;
+    y1 = y1 * 0.7 + det.y1 * 0.3;
+    x2 = x2 * 0.7 + det.x2 * 0.3;
+    y2 = y2 * 0.7 + det.y2 * 0.3;
+    confidence = det.confidence;
+    hitCount++;
+    lastSeen = now;
   }
 }
