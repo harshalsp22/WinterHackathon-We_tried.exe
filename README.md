@@ -23,16 +23,21 @@ The application provides:
 # Demo Video Link: <insert Google Drive link to the demo video of the working of your project>
 
 ## Features
-- Key feature 1
-- Key feature 2
-- Key feature 3
+- AR Overlay Repair Guidance
+- AI-Based RAM Detection
+- Progress Tracking
+- Configuration Selection
 
 ## Tech Stack
-List the technologies, frameworks, and tools used in the project.
+- Ultralytics
+- Android Studio
+- Flutter(Dart)
+- Firebase
+- Firebase Authenication
+- Firebase Firestore
 
 
 ## Google Technologies Used
-> ⚠️ Using Google products is **mandatory** for this hackathon.
 
 The following Google technologies were used to build the application:
 
@@ -46,7 +51,7 @@ The following Google technologies were used to build the application:
 
 - **Firebase Firestore** – Stores device models, repair steps, component data, and user progress in real time.
 
-- **ARCore** – Powers the augmented reality features, enabling device tracking, component recognition, and overlaying step-by-step repair instructions directly onto real-world devices.
+
 
 
 ## Setup Instructions
