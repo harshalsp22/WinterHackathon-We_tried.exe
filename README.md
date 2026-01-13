@@ -1,7 +1,7 @@
  # ARsenal
 
 ## Description
-A mobile augmented reality repair assistant that helps users fix laptops and everyday electronics using guided visual instructions. The system identifies devices through the phone camera, locates faulty components, and provides step-by-step repair guidance in real time.
+A mobile augmented reality repair assistant that helps users fix laptops and everyday electronics using guided visual instructions. The system identifies devices through the phone camera, locates faulty components, and provides step-by-step repair guidance in real time. We trained the YOLO model on a custom dataset of 3,000 images collected by us.
 
 ## Problem
 Device repair is often avoided due to high costs, lack of parts, and complex repair procedures. As a result, many users replace devices instead of fixing them, leading to unnecessary expense and electronic waste.
