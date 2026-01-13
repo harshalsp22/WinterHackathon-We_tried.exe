@@ -20,7 +20,7 @@ The application provides:
 - Students and DIY repair learners
 - Anyone seeking affordable and sustainable repair options
 
-# Demo Video Link: <insert Google Drive link to the demo video of the working of your project>
+# Demo Video Link: https://drive.google.com/file/d/1QJiUxkqUe1QZVbbSfa9m3DEvvKUNo3Z5/view
 
 ## Features
 - AR Overlay Repair Guidance
