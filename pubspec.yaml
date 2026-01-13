@@ -39,7 +39,6 @@ dependencies:
   flutter_spinkit: ^5.2.2
   google_sign_in: ^7.0.0
   flutter_dotenv: ^6.0.0
-  ar_flutter_plugin: ^0.7.3
   model_viewer_plus: ^1.7.1
   vector_math: ^2.1.4
   camera: ^0.11.0+2
@@ -65,7 +64,7 @@ flutter:
 
   assets:
     - lib/assets/images/bg.png
-    - lib/assets/models/
+    - lib/assets/models/arrow_indicator.glb
     - .env
 
 

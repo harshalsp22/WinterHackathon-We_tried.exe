@@ -1,17 +1,12 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:math' as math;
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import '../models/diagnostic_plan.dart';
 import '../services/yolo_service.dart';
+import '../widgets/ar_3d_indicator.dart';
 
-// Component Status Enum
-enum ComponentStatus {
-  critical,  // Red - Crucial, needs immediate attention
-  warning,   // Yellow - Needs to be checked
-  ok,        // Green - All OK
-}
+enum ComponentStatus { critical, warning, ok }
 
 class ARCameraScreen extends StatefulWidget {
   final DiagnosticPlan plan;
@@ -33,8 +28,6 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
 
   List<StableDetection> _stableDetections = [];
   final Map<String, StableDetection> _detectionHistory = {};
-
-  // Track checked components and their status
   final Map<String, ComponentStatus> _componentStatus = {};
   final Set<String> _checkedComponents = {};
 
@@ -75,7 +68,6 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
       );
 
       await _cameraController!.initialize();
-
       if (!mounted) return;
 
       setState(() => _isInitialized = true);
@@ -104,15 +96,12 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
     try {
       final XFile image = await _cameraController!.takePicture();
       final Uint8List bytes = await image.readAsBytes();
-
       setState(() => _framesSent++);
 
-      final response =
-      await _yoloService.detectFromBytes(bytes, confidence: 0.15);
+      final response = await _yoloService.detectFromBytes(bytes, confidence: 0.15);
 
       if (response != null && mounted) {
         _updateStableDetections(response.detections);
-
         setState(() {
           _imageSize = Size(
             response.imageWidth.toDouble(),
@@ -131,62 +120,54 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
 
   void _updateStableDetections(List<Detection> newDetections) {
     final now = DateTime.now();
-
     for (final det in newDetections) {
       final key = det.className;
-
       if (_detectionHistory.containsKey(key)) {
         _detectionHistory[key]!.update(det, now);
       } else {
         _detectionHistory[key] = StableDetection.fromDetection(det, now);
       }
     }
-
     _detectionHistory.removeWhere(
           (key, det) => now.difference(det.lastSeen).inMilliseconds > 2000,
     );
-
-    _stableDetections =
-        _detectionHistory.values.where((d) => d.hitCount >= 2).toList();
+    _stableDetections = _detectionHistory.values
+        .where((d) => d.hitCount >= 2)
+        .toList();
   }
 
   void _checkCurrentStepComponent() {
     if (_currentStepIndex >= widget.plan.steps.length) return;
-
     final currentStep = widget.plan.steps[_currentStepIndex];
     final targetComponent = currentStep.cameraFocus.toLowerCase();
-
-    _componentFound = _stableDetections
-        .any((d) => d.className.toLowerCase().contains(targetComponent));
+    _componentFound = _stableDetections.any(
+          (d) => d.className.toLowerCase().contains(targetComponent),
+    );
   }
 
-  // Get component status based on current step and check history
   ComponentStatus _getComponentStatus(String componentName) {
     final lowerName = componentName.toLowerCase();
-
-    // If already set by user, return that status
     if (_componentStatus.containsKey(lowerName)) {
       return _componentStatus[lowerName]!;
     }
-
     final currentStep = widget.plan.steps[_currentStepIndex];
     final targetComponent = currentStep.cameraFocus.toLowerCase();
-
-    // Current target = Yellow (needs checking)
-    if (lowerName.contains(targetComponent)) {
-      return ComponentStatus.warning;
-    }
-
-    // Already checked = Green
-    if (_checkedComponents.contains(lowerName)) {
-      return ComponentStatus.ok;
-    }
-
-    // Not yet checked and not current target = Red (crucial)
+    if (lowerName.contains(targetComponent)) return ComponentStatus.warning;
+    if (_checkedComponents.contains(lowerName)) return ComponentStatus.ok;
     return ComponentStatus.critical;
   }
 
-  // Mark component as checked with status
+  IndicatorStatus _toIndicatorStatus(ComponentStatus status) {
+    switch (status) {
+      case ComponentStatus.critical:
+        return IndicatorStatus.critical;
+      case ComponentStatus.warning:
+        return IndicatorStatus.warning;
+      case ComponentStatus.ok:
+        return IndicatorStatus.ok;
+    }
+  }
+
   void _markComponentStatus(String componentName, ComponentStatus status) {
     setState(() {
       final lowerName = componentName.toLowerCase();
@@ -199,39 +180,71 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (_) => Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: Colors.grey[900],
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Component name
-            Row(
-              children: [
-                Icon(
-                  _getIconForClass(detection.className),
-                  color: Colors.white,
-                  size: 32,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  detection.className.toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+            // Handle
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[700],
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
             const SizedBox(height: 20),
 
+            // Component info
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    _getIconForClass(detection.className),
+                    color: Colors.blue,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      detection.className.toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      'Confidence: ${(detection.confidence * 100).toStringAsFixed(1)}%',
+                      style: TextStyle(color: Colors.grey[500]),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+
             const Text(
-              'Set Component Status:',
-              style: TextStyle(color: Colors.white70, fontSize: 14),
+              'SET COMPONENT STATUS',
+              style: TextStyle(
+                color: Colors.white54,
+                fontSize: 12,
+                letterSpacing: 2,
+              ),
             ),
             const SizedBox(height: 16),
 
@@ -239,38 +252,38 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
             Row(
               children: [
                 Expanded(
-                  child: _statusButton(
-                    'CRITICAL',
-                    'Needs Fix',
-                    Colors.red,
-                    Icons.error,
-                        () {
+                  child: _StatusButton(
+                    label: 'CRITICAL',
+                    subtitle: 'Needs Fix',
+                    color: Colors.red,
+                    icon: Icons.error,
+                    onTap: () {
                       _markComponentStatus(detection.className, ComponentStatus.critical);
                       Navigator.pop(context);
                     },
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(
-                  child: _statusButton(
-                    'WARNING',
-                    'Check Later',
-                    Colors.orange,
-                    Icons.warning,
-                        () {
+                  child: _StatusButton(
+                    label: 'WARNING',
+                    subtitle: 'Check Later',
+                    color: Colors.orange,
+                    icon: Icons.warning_amber,
+                    onTap: () {
                       _markComponentStatus(detection.className, ComponentStatus.warning);
                       Navigator.pop(context);
                     },
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(
-                  child: _statusButton(
-                    'OK',
-                    'All Good',
-                    Colors.green,
-                    Icons.check_circle,
-                        () {
+                  child: _StatusButton(
+                    label: 'OK',
+                    subtitle: 'All Good',
+                    color: Colors.green,
+                    icon: Icons.check_circle,
+                    onTap: () {
                       _markComponentStatus(detection.className, ComponentStatus.ok);
                       Navigator.pop(context);
                     },
@@ -278,53 +291,11 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
                 ),
               ],
             ),
-
             const SizedBox(height: 16),
 
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _statusButton(
-      String title,
-      String subtitle,
-      Color color,
-      IconData icon,
-      VoidCallback onTap,
-      ) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 28),
-            const SizedBox(height: 8),
-            Text(
-              title,
-              style: TextStyle(
-                color: color,
-                fontWeight: FontWeight.bold,
-                fontSize: 12,
-              ),
-            ),
-            Text(
-              subtitle,
-              style: TextStyle(
-                color: color.withOpacity(0.7),
-                fontSize: 10,
-              ),
+              child: const Text('CANCEL', style: TextStyle(color: Colors.white54)),
             ),
           ],
         ),
@@ -334,13 +305,11 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
 
   void _nextStep() {
     if (_currentStepIndex < widget.plan.steps.length - 1) {
-      // Mark current target as checked if not already
       final currentStep = widget.plan.steps[_currentStepIndex];
       final target = currentStep.cameraFocus.toLowerCase();
       if (!_componentStatus.containsKey(target)) {
         _checkedComponents.add(target);
       }
-
       setState(() {
         _currentStepIndex++;
         _componentFound = false;
@@ -360,9 +329,8 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
   }
 
   void _showCompletionDialog() {
-    // Count status summary
     int critical = 0, warning = 0, ok = 0;
-    _componentStatus.forEach((key, status) {
+    _componentStatus.forEach((_, status) {
       if (status == ComponentStatus.critical) critical++;
       if (status == ComponentStatus.warning) warning++;
       if (status == ComponentStatus.ok) ok++;
@@ -370,99 +338,102 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
 
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: Colors.grey[900],
-        title: const Row(
-          children: [
-            Icon(Icons.flag, color: Colors.white),
-            SizedBox(width: 8),
-            Text('Diagnostic Summary', style: TextStyle(color: Colors.white)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _summaryRow(Icons.error, 'Critical', critical, Colors.red),
-            _summaryRow(Icons.warning, 'Warning', warning, Colors.orange),
-            _summaryRow(Icons.check_circle, 'OK', ok, Colors.green),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pop(context);
-            },
-            child: const Text('Done', style: TextStyle(color: Colors.green)),
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.grey[900],
+            borderRadius: BorderRadius.circular(20),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _summaryRow(IconData icon, String label, int count, Color color) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(width: 12),
-          Text(label, style: const TextStyle(color: Colors.white)),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              '$count',
-              style: TextStyle(color: color, fontWeight: FontWeight.bold),
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.check_circle, color: Colors.green, size: 48),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'DIAGNOSTIC COMPLETE',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1,
+                ),
+              ),
+              const SizedBox(height: 24),
+              _SummaryRow(icon: Icons.error, label: 'Critical', count: critical, color: Colors.red),
+              _SummaryRow(icon: Icons.warning, label: 'Warning', count: warning, color: Colors.orange),
+              _SummaryRow(icon: Icons.check_circle, label: 'OK', count: ok, color: Colors.green),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    Navigator.pop(context);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('DONE', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
   void _addMockDetections() {
     final screenSize = MediaQuery.of(context).size;
-
     setState(() {
       _stableDetections = [
         StableDetection(
           className: 'RAM',
           confidence: 0.92,
-          x1: screenSize.width * 0.1,
-          y1: screenSize.height * 0.25,
-          x2: screenSize.width * 0.45,
-          y2: screenSize.height * 0.40,
+          x1: screenSize.width * 0.08,
+          y1: screenSize.height * 0.28,
+          x2: screenSize.width * 0.42,
+          y2: screenSize.height * 0.42,
           hitCount: 5,
           lastSeen: DateTime.now(),
         ),
         StableDetection(
           className: 'CPU',
           confidence: 0.88,
-          x1: screenSize.width * 0.5,
-          y1: screenSize.height * 0.2,
-          x2: screenSize.width * 0.85,
-          y2: screenSize.height * 0.38,
+          x1: screenSize.width * 0.52,
+          y1: screenSize.height * 0.25,
+          x2: screenSize.width * 0.88,
+          y2: screenSize.height * 0.40,
           hitCount: 5,
           lastSeen: DateTime.now(),
         ),
         StableDetection(
           className: 'SSD',
           confidence: 0.85,
-          x1: screenSize.width * 0.15,
-          y1: screenSize.height * 0.45,
-          x2: screenSize.width * 0.5,
-          y2: screenSize.height * 0.58,
+          x1: screenSize.width * 0.12,
+          y1: screenSize.height * 0.48,
+          x2: screenSize.width * 0.48,
+          y2: screenSize.height * 0.62,
           hitCount: 5,
           lastSeen: DateTime.now(),
         ),
       ];
       _imageSize = screenSize;
-      _serverStatus = '🧪 Mock Mode';
+      _serverStatus = '🧪 Mock';
       _checkCurrentStepComponent();
     });
   }
@@ -488,16 +459,20 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const CircularProgressIndicator(color: Colors.white),
-          const SizedBox(height: 16),
-          const Text('Initializing camera...',
-              style: TextStyle(color: Colors.white)),
-          const SizedBox(height: 24),
-          ElevatedButton(
+          const SizedBox(height: 20),
+          const Text('Initializing camera...', style: TextStyle(color: Colors.white)),
+          const SizedBox(height: 30),
+          OutlinedButton.icon(
             onPressed: () {
               setState(() => _isInitialized = true);
               _addMockDetections();
             },
-            child: const Text('Use Demo Mode'),
+            icon: const Icon(Icons.play_arrow),
+            label: const Text('DEMO MODE'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.orange,
+              side: const BorderSide(color: Colors.orange),
+            ),
           ),
         ],
       ),
@@ -512,16 +487,15 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Camera Preview
+        // Camera preview
         if (_cameraController != null) CameraPreview(_cameraController!),
 
-        // AR Bounding Boxes with Flags
+        // AR Overlays with 3D indicators
         ..._stableDetections.map((det) {
-          final isTarget =
-          det.className.toLowerCase().contains(targetComponent);
+          final isTarget = det.className.toLowerCase().contains(targetComponent);
           final status = _getComponentStatus(det.className);
 
-          return ARBoundingBoxWithFlag(
+          return _ARComponentOverlay(
             key: ValueKey(det.className),
             detection: det,
             imageSize: _imageSize,
@@ -532,73 +506,18 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
           );
         }),
 
-        // Top Bar
+        // Top bar
         _buildTopBar(),
 
-        // Debug Panel
+        // Debug panel
         if (_showDebugPanel) _buildDebugPanel(),
 
         // Legend
         _buildLegend(),
 
-        // Bottom Panel
+        // Bottom panel
         _buildBottomPanel(currentStep),
       ],
-    );
-  }
-
-  Widget _buildLegend() {
-    return Positioned(
-      top: MediaQuery.of(context).padding.top + 60,
-      right: 10,
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.8),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Status:',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 11,
-              ),
-            ),
-            const SizedBox(height: 6),
-            _legendItem(Colors.red, 'Critical'),
-            _legendItem(Colors.orange, 'Check'),
-            _legendItem(Colors.green, 'OK'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _legendItem(Color color, String label) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(color: Colors.white70, fontSize: 10),
-          ),
-        ],
-      ),
     );
   }
 
@@ -610,45 +529,54 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
       child: Container(
         padding: EdgeInsets.only(
           top: MediaQuery.of(context).padding.top + 8,
-          left: 8,
-          right: 8,
-          bottom: 8,
+          left: 12,
+          right: 12,
+          bottom: 12,
         ),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Colors.black.withOpacity(0.8), Colors.transparent],
+            colors: [Colors.black, Colors.transparent],
           ),
         ),
         child: Row(
           children: [
-            IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
+            _GlassButton(
+              icon: Icons.arrow_back,
               onPressed: () => Navigator.pop(context),
             ),
+            const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                'Step ${_currentStepIndex + 1} / ${widget.plan.steps.length}',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: Text(
+                  'STEP ${_currentStepIndex + 1} / ${widget.plan.steps.length}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1,
+                  ),
                 ),
               ),
             ),
-            IconButton(
-              icon: const Icon(Icons.science, color: Colors.orange),
+            const SizedBox(width: 12),
+            _GlassButton(
+              icon: Icons.science,
+              color: Colors.orange,
               onPressed: _addMockDetections,
             ),
-            IconButton(
-              icon: Icon(
-                Icons.bug_report,
-                color: _showDebugPanel ? Colors.green : Colors.white54,
-              ),
-              onPressed: () =>
-                  setState(() => _showDebugPanel = !_showDebugPanel),
+            const SizedBox(width: 8),
+            _GlassButton(
+              icon: Icons.bug_report,
+              color: _showDebugPanel ? Colors.green : Colors.white54,
+              onPressed: () => setState(() => _showDebugPanel = !_showDebugPanel),
             ),
           ],
         ),
@@ -658,23 +586,45 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
 
   Widget _buildDebugPanel() {
     return Positioned(
-      top: MediaQuery.of(context).padding.top + 60,
-      left: 10,
+      top: MediaQuery.of(context).padding.top + 70,
+      left: 12,
       child: Container(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.8),
-          borderRadius: BorderRadius.circular(8),
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.green.withOpacity(0.3)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Server: $_serverStatus',
-                style: const TextStyle(color: Colors.white, fontSize: 11)),
-            Text('Frames: $_framesSent',
-                style: const TextStyle(color: Colors.white, fontSize: 11)),
-            Text('Detected: ${_stableDetections.length}',
-                style: const TextStyle(color: Colors.white, fontSize: 11)),
+            Text('Server: $_serverStatus', style: const TextStyle(color: Colors.white, fontSize: 11)),
+            Text('Frames: $_framesSent', style: const TextStyle(color: Colors.white70, fontSize: 11)),
+            Text('Detected: ${_stableDetections.length}', style: const TextStyle(color: Colors.white70, fontSize: 11)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLegend() {
+    return Positioned(
+      top: MediaQuery.of(context).padding.top + 70,
+      right: 12,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('STATUS', style: TextStyle(color: Colors.white54, fontSize: 10, letterSpacing: 1)),
+            const SizedBox(height: 8),
+            _LegendItem(color: Colors.red, label: 'Critical'),
+            _LegendItem(color: Colors.orange, label: 'Check'),
+            _LegendItem(color: Colors.green, label: 'OK'),
           ],
         ),
       ),
@@ -689,42 +639,40 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
       child: Container(
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).padding.bottom + 16,
-          left: 16,
-          right: 16,
-          top: 16,
+          left: 20,
+          right: 20,
+          top: 20,
         ),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
-            colors: [Colors.black.withOpacity(0.95), Colors.transparent],
+            colors: [Colors.black, Colors.transparent],
           ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Found indicator
             if (_componentFound)
               Container(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                margin: const EdgeInsets.only(bottom: 16),
                 decoration: BoxDecoration(
                   color: Colors.green,
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(25),
+                  boxShadow: [
+                    BoxShadow(color: Colors.green.withOpacity(0.4), blurRadius: 15),
+                  ],
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.check_circle,
-                        color: Colors.white, size: 18),
-                    const SizedBox(width: 8),
+                    const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                    const SizedBox(width: 10),
                     Text(
-                      '${currentStep.cameraFocus} FOUND! Tap to set status',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
+                      '${currentStep.cameraFocus} DETECTED',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
@@ -732,89 +680,63 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
 
             Text(
               currentStep.title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 6),
-
+            const SizedBox(height: 8),
             Text(
               currentStep.description,
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
+              style: TextStyle(color: Colors.grey[400], fontSize: 14),
               textAlign: TextAlign.center,
+              maxLines: 2,
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
 
+            // Target
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                border: Border.all(color: Colors.blue),
+                border: Border.all(color: Colors.cyan),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
-                '📷 Find: ${currentStep.cameraFocus}',
-                style: const TextStyle(color: Colors.blue, fontSize: 12),
+                '🎯 TARGET: ${currentStep.cameraFocus}',
+                style: TextStyle(color: Colors.cyan[400], fontSize: 12, fontWeight: FontWeight.bold),
               ),
             ),
 
-            if (currentStep.safetyWarning.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.warning, color: Colors.red, size: 16),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        currentStep.safetyWarning,
-                        style:
-                        const TextStyle(color: Colors.red, fontSize: 11),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            const SizedBox(height: 20),
 
-            const SizedBox(height: 16),
-
+            // Navigation
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                ElevatedButton.icon(
-                  onPressed: _currentStepIndex > 0 ? _previousStep : null,
-                  icon: const Icon(Icons.arrow_back, size: 16),
-                  label: const Text('Previous'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.grey[800],
-                    foregroundColor: Colors.white,
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _currentStepIndex > 0 ? _previousStep : null,
+                    icon: const Icon(Icons.arrow_back, size: 18),
+                    label: const Text('PREVIOUS'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.grey[800],
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
                   ),
                 ),
-                ElevatedButton.icon(
-                  onPressed: _nextStep,
-                  icon: Icon(
-                    _currentStepIndex < widget.plan.steps.length - 1
-                        ? Icons.arrow_forward
-                        : Icons.check,
-                    size: 16,
-                  ),
-                  label: Text(
-                    _currentStepIndex < widget.plan.steps.length - 1
-                        ? 'Next'
-                        : 'Done',
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                    _componentFound ? Colors.green : Colors.blue,
-                    foregroundColor: Colors.white,
+                const SizedBox(width: 16),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton.icon(
+                    onPressed: _nextStep,
+                    icon: Icon(
+                      _currentStepIndex < widget.plan.steps.length - 1 ? Icons.arrow_forward : Icons.check,
+                      size: 18,
+                    ),
+                    label: Text(_currentStepIndex < widget.plan.steps.length - 1 ? 'NEXT STEP' : 'COMPLETE'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _componentFound ? Colors.green : Colors.blue,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
                   ),
                 ),
               ],
@@ -838,10 +760,10 @@ class _ARCameraScreenState extends State<ARCameraScreen> {
 }
 
 // ============================================
-// AR BOUNDING BOX WITH 3D FLAG
+// AR COMPONENT OVERLAY WITH 3D INDICATOR
 // ============================================
 
-class ARBoundingBoxWithFlag extends StatefulWidget {
+class _ARComponentOverlay extends StatefulWidget {
   final StableDetection detection;
   final Size imageSize;
   final Size screenSize;
@@ -849,7 +771,7 @@ class ARBoundingBoxWithFlag extends StatefulWidget {
   final ComponentStatus status;
   final VoidCallback onTap;
 
-  const ARBoundingBoxWithFlag({
+  const _ARComponentOverlay({
     super.key,
     required this.detection,
     required this.imageSize,
@@ -860,30 +782,30 @@ class ARBoundingBoxWithFlag extends StatefulWidget {
   });
 
   @override
-  State<ARBoundingBoxWithFlag> createState() => _ARBoundingBoxWithFlagState();
+  State<_ARComponentOverlay> createState() => _ARComponentOverlayState();
 }
 
-class _ARBoundingBoxWithFlagState extends State<ARBoundingBoxWithFlag>
+class _ARComponentOverlayState extends State<_ARComponentOverlay>
     with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
+  late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 1200),
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
       vsync: this,
     )..repeat(reverse: true);
 
     _pulseAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -898,6 +820,39 @@ class _ARBoundingBoxWithFlagState extends State<ARBoundingBoxWithFlag>
     }
   }
 
+  IndicatorStatus get _indicatorStatus {
+    switch (widget.status) {
+      case ComponentStatus.critical:
+        return IndicatorStatus.critical;
+      case ComponentStatus.warning:
+        return IndicatorStatus.warning;
+      case ComponentStatus.ok:
+        return IndicatorStatus.ok;
+    }
+  }
+
+  Color _getColorForClass(String className) {
+    final name = className.toLowerCase();
+    if (name.contains('ram')) return const Color(0xFF2196F3);
+    if (name.contains('cpu')) return const Color(0xFFE91E63);
+    if (name.contains('ssd') || name.contains('hdd')) return const Color(0xFFFF9800);
+    if (name.contains('battery')) return const Color(0xFFFFEB3B);
+    if (name.contains('fan')) return const Color(0xFF00BCD4);
+    if (name.contains('gpu')) return const Color(0xFF9C27B0);
+    return Colors.white;
+  }
+
+  IconData _getIconForClass(String className) {
+    final name = className.toLowerCase();
+    if (name.contains('ram')) return Icons.memory;
+    if (name.contains('cpu')) return Icons.developer_board;
+    if (name.contains('ssd') || name.contains('hdd')) return Icons.storage;
+    if (name.contains('battery')) return Icons.battery_full;
+    if (name.contains('fan')) return Icons.toys;
+    if (name.contains('gpu')) return Icons.videogame_asset;
+    return Icons.memory;
+  }
+
   @override
   Widget build(BuildContext context) {
     final det = widget.detection;
@@ -906,10 +861,8 @@ class _ARBoundingBoxWithFlagState extends State<ARBoundingBoxWithFlag>
 
     final x = (det.x1 * scaleX).clamp(0.0, widget.screenSize.width - 60);
     final y = (det.y1 * scaleY).clamp(0.0, widget.screenSize.height - 60);
-    final width =
-    ((det.x2 - det.x1) * scaleX).clamp(80.0, widget.screenSize.width - x);
-    final height =
-    ((det.y2 - det.y1) * scaleY).clamp(80.0, widget.screenSize.height - y);
+    final width = ((det.x2 - det.x1) * scaleX).clamp(80.0, widget.screenSize.width - x);
+    final height = ((det.y2 - det.y1) * scaleY).clamp(80.0, widget.screenSize.height - y);
 
     final boxColor = widget.isTarget ? _statusColor : _getColorForClass(det.className);
 
@@ -921,7 +874,7 @@ class _ARBoundingBoxWithFlagState extends State<ARBoundingBoxWithFlag>
         child: AnimatedBuilder(
           animation: _pulseAnimation,
           builder: (context, child) {
-            final pulseValue = _pulseAnimation.value;
+            final pulse = _pulseAnimation.value;
 
             return SizedBox(
               width: width,
@@ -934,12 +887,12 @@ class _ARBoundingBoxWithFlagState extends State<ARBoundingBoxWithFlag>
                     Positioned.fill(
                       child: Container(
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(12),
                           boxShadow: [
                             BoxShadow(
-                              color: _statusColor.withOpacity(0.3 + pulseValue * 0.2),
-                              blurRadius: 15 + pulseValue * 10,
-                              spreadRadius: pulseValue * 5,
+                              color: _statusColor.withOpacity(0.3 + pulse * 0.2),
+                              blurRadius: 20 + pulse * 10,
+                              spreadRadius: pulse * 5,
                             ),
                           ],
                         ),
@@ -951,44 +904,35 @@ class _ARBoundingBoxWithFlagState extends State<ARBoundingBoxWithFlag>
                     child: Container(
                       decoration: BoxDecoration(
                         border: Border.all(
-                          color: boxColor.withOpacity(0.7 + pulseValue * 0.3),
+                          color: boxColor.withOpacity(0.6 + pulse * 0.4),
                           width: widget.isTarget ? 3 : 2,
                         ),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
                   ),
 
-                  // Corner brackets
-                  ..._buildCorners(width, height, boxColor, pulseValue),
+                  // Corners
+                  ..._buildCorners(width, height, boxColor, pulse),
 
-                  // Label
+                  // Component label
                   Positioned(
-                    top: -30,
+                    top: -32,
                     left: 0,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         color: boxColor,
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            _getIconForClass(det.className),
-                            color: Colors.white,
-                            size: 14,
-                          ),
+                          Icon(_getIconForClass(det.className), color: Colors.white, size: 14),
                           const SizedBox(width: 6),
                           Text(
                             '${det.className} ${(det.confidence * 100).toStringAsFixed(0)}%',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
                           ),
                         ],
                       ),
@@ -998,52 +942,50 @@ class _ARBoundingBoxWithFlagState extends State<ARBoundingBoxWithFlag>
                   // Center icon
                   Center(
                     child: Transform.scale(
-                      scale: 1.0 + pulseValue * 0.1,
+                      scale: 1.0 + pulse * 0.08,
                       child: Container(
-                        padding: const EdgeInsets.all(10),
+                        padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.6),
+                          color: Colors.black.withOpacity(0.7),
                           shape: BoxShape.circle,
-                          border: Border.all(
-                            color: boxColor.withOpacity(0.7 + pulseValue * 0.3),
-                            width: 2,
-                          ),
+                          border: Border.all(color: boxColor.withOpacity(0.6 + pulse * 0.4), width: 2),
                         ),
-                        child: Icon(
-                          _getIconForClass(det.className),
-                          color: boxColor,
-                          size: 24,
-                        ),
+                        child: Icon(_getIconForClass(det.className), color: boxColor, size: 26),
                       ),
                     ),
                   ),
 
-                  // 3D Flag
+                  // ========== 3D ARROW INDICATOR ==========
                   Positioned(
-                    top: -70,
+                    top: -140,
+                    left: 0,
                     right: 0,
-                    child: Flag3D(
-                      status: widget.status,
-                      pulseValue: pulseValue,
+                    child: Center(
+                      child: AR3DIndicator(
+                        status: _indicatorStatus,
+                        componentName: det.className,
+                        size: 100,
+                        onTap: widget.onTap,
+                      ),
                     ),
                   ),
+                  // =========================================
 
                   // Tap hint
                   Positioned(
-                    bottom: -20,
+                    bottom: -22,
                     left: 0,
                     right: 0,
                     child: Center(
                       child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.black54,
+                          color: Colors.black87,
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Text(
-                          'Tap to set status',
-                          style: TextStyle(color: Colors.white54, fontSize: 9),
+                          'TAP TO SET STATUS',
+                          style: TextStyle(color: Colors.white54, fontSize: 9, letterSpacing: 1),
                         ),
                       ),
                     ),
@@ -1058,30 +1000,18 @@ class _ARBoundingBoxWithFlagState extends State<ARBoundingBoxWithFlag>
   }
 
   List<Widget> _buildCorners(double w, double h, Color color, double pulse) {
-    const size = 20.0;
-    final opacity = 0.7 + pulse * 0.3;
+    const size = 24.0;
+    final opacity = 0.6 + pulse * 0.4;
 
     Widget corner(Alignment align) {
       return Positioned(
-        top: align == Alignment.topLeft || align == Alignment.topRight
-            ? 0
-            : null,
-        bottom: align == Alignment.bottomLeft || align == Alignment.bottomRight
-            ? 0
-            : null,
-        left: align == Alignment.topLeft || align == Alignment.bottomLeft
-            ? 0
-            : null,
-        right: align == Alignment.topRight || align == Alignment.bottomRight
-            ? 0
-            : null,
+        top: align == Alignment.topLeft || align == Alignment.topRight ? 0 : null,
+        bottom: align == Alignment.bottomLeft || align == Alignment.bottomRight ? 0 : null,
+        left: align == Alignment.topLeft || align == Alignment.bottomLeft ? 0 : null,
+        right: align == Alignment.topRight || align == Alignment.bottomRight ? 0 : null,
         child: CustomPaint(
           size: const Size(size, size),
-          painter: CornerPainter(
-            alignment: align,
-            color: color.withOpacity(opacity),
-            strokeWidth: 3,
-          ),
+          painter: _CornerPainter(alignment: align, color: color.withOpacity(opacity), strokeWidth: 3),
         ),
       );
     }
@@ -1093,326 +1023,144 @@ class _ARBoundingBoxWithFlagState extends State<ARBoundingBoxWithFlag>
       corner(Alignment.bottomRight),
     ];
   }
-
-  Color _getColorForClass(String className) {
-    final name = className.toLowerCase();
-    if (name.contains('ram')) return Colors.blue;
-    if (name.contains('cpu')) return Colors.red;
-    if (name.contains('ssd') || name.contains('hdd')) return Colors.orange;
-    if (name.contains('battery')) return Colors.yellow;
-    if (name.contains('fan')) return Colors.cyan;
-    if (name.contains('gpu')) return Colors.pink;
-    return Colors.white;
-  }
-
-  IconData _getIconForClass(String className) {
-    final name = className.toLowerCase();
-    if (name.contains('ram')) return Icons.memory;
-    if (name.contains('cpu')) return Icons.developer_board;
-    if (name.contains('ssd') || name.contains('hdd')) return Icons.storage;
-    if (name.contains('battery')) return Icons.battery_full;
-    if (name.contains('fan')) return Icons.toys;
-    if (name.contains('gpu')) return Icons.videogame_asset;
-    return Icons.memory;
-  }
 }
 
 // ============================================
-// 3D FLAG WIDGET
+// HELPER WIDGETS
 // ============================================
 
-class Flag3D extends StatefulWidget {
-  final ComponentStatus status;
-  final double pulseValue;
+class _GlassButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onPressed;
+  final Color? color;
 
-  const Flag3D({
-    super.key,
-    required this.status,
-    required this.pulseValue,
-  });
-
-  @override
-  State<Flag3D> createState() => _Flag3DState();
-}
-
-class _Flag3DState extends State<Flag3D> with SingleTickerProviderStateMixin {
-  late AnimationController _waveController;
-
-  @override
-  void initState() {
-    super.initState();
-    _waveController = AnimationController(
-      duration: const Duration(milliseconds: 800),
-      vsync: this,
-    )..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _waveController.dispose();
-    super.dispose();
-  }
-
-  Color get _flagColor {
-    switch (widget.status) {
-      case ComponentStatus.critical:
-        return Colors.red;
-      case ComponentStatus.warning:
-        return Colors.orange;
-      case ComponentStatus.ok:
-        return Colors.green;
-    }
-  }
-
-  IconData get _flagIcon {
-    switch (widget.status) {
-      case ComponentStatus.critical:
-        return Icons.error;
-      case ComponentStatus.warning:
-        return Icons.warning;
-      case ComponentStatus.ok:
-        return Icons.check;
-    }
-  }
-
-  String get _flagLabel {
-    switch (widget.status) {
-      case ComponentStatus.critical:
-        return '!';
-      case ComponentStatus.warning:
-        return '?';
-      case ComponentStatus.ok:
-        return '✓';
-    }
-  }
+  const _GlassButton({required this.icon, required this.onPressed, this.color});
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _waveController,
-      builder: (context, child) {
-        final waveValue = _waveController.value;
-
-        return SizedBox(
-          width: 50,
-          height: 60,
-          child: Stack(
-            children: [
-              // Flag pole (3D effect)
-              Positioned(
-                left: 5,
-                top: 0,
-                child: Container(
-                  width: 4,
-                  height: 60,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                      colors: [
-                        Colors.grey[600]!,
-                        Colors.grey[400]!,
-                        Colors.grey[600]!,
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(2),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.3),
-                        blurRadius: 2,
-                        offset: const Offset(1, 1),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // Pole top ball
-              Positioned(
-                left: 2,
-                top: -2,
-                child: Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [
-                        Colors.grey[300]!,
-                        Colors.grey[600]!,
-                      ],
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.3),
-                        blurRadius: 2,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // 3D Flag with wave effect
-              Positioned(
-                left: 9,
-                top: 5,
-                child: Transform(
-                  alignment: Alignment.centerLeft,
-                  transform: Matrix4.identity()
-                    ..setEntry(3, 2, 0.002) // perspective
-                    ..rotateY(waveValue * 0.2 - 0.1), // wave
-                  child: Container(
-                    width: 40,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          _flagColor,
-                          _flagColor.withOpacity(0.8),
-                          _flagColor.withOpacity(0.6),
-                        ],
-                      ),
-                      borderRadius: const BorderRadius.only(
-                        topRight: Radius.circular(4),
-                        bottomRight: Radius.circular(4),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: _flagColor.withOpacity(0.4),
-                          blurRadius: 8,
-                          spreadRadius: 1,
-                        ),
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 4,
-                          offset: const Offset(2, 2),
-                        ),
-                      ],
-                    ),
-                    child: Stack(
-                      children: [
-                        // Wave effect overlay
-                        Positioned.fill(
-                          child: CustomPaint(
-                            painter: FlagWavePainter(
-                              waveValue: waveValue,
-                              color: Colors.white.withOpacity(0.1),
-                            ),
-                          ),
-                        ),
-
-                        // Icon in center
-                        Center(
-                          child: Icon(
-                            _flagIcon,
-                            color: Colors.white,
-                            size: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              // Flag tail (triangle)
-              Positioned(
-                left: 49,
-                top: 5,
-                child: Transform(
-                  alignment: Alignment.centerLeft,
-                  transform: Matrix4.identity()
-                    ..setEntry(3, 2, 0.002)
-                    ..rotateY(waveValue * 0.3 - 0.15),
-                  child: CustomPaint(
-                    size: const Size(8, 28),
-                    painter: FlagTailPainter(color: _flagColor.withOpacity(0.6)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: Icon(icon, color: color ?? Colors.white, size: 22),
+      ),
     );
   }
 }
 
-// Flag wave pattern painter
-class FlagWavePainter extends CustomPainter {
-  final double waveValue;
+class _LegendItem extends StatelessWidget {
   final Color color;
+  final String label;
 
-  FlagWavePainter({required this.waveValue, required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.fill;
-
-    final path = Path();
-    path.moveTo(0, 0);
-
-    for (double x = 0; x <= size.width; x++) {
-      final y = math.sin((x / size.width * 2 * math.pi) + (waveValue * math.pi * 2)) * 3;
-      path.lineTo(x, y + size.height / 2);
-    }
-
-    path.lineTo(size.width, size.height);
-    path.lineTo(0, size.height);
-    path.close();
-
-    canvas.drawPath(path, paint);
-  }
+  const _LegendItem({required this.color, required this.label});
 
   @override
-  bool shouldRepaint(covariant FlagWavePainter oldDelegate) {
-    return oldDelegate.waveValue != waveValue;
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3)),
+          ),
+          const SizedBox(width: 8),
+          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+        ],
+      ),
+    );
   }
 }
 
-// Flag tail triangle painter
-class FlagTailPainter extends CustomPainter {
+class _StatusButton extends StatelessWidget {
+  final String label;
+  final String subtitle;
+  final Color color;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _StatusButton({
+    required this.label,
+    required this.subtitle,
+    required this.color,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color, width: 2),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 32),
+            const SizedBox(height: 10),
+            Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12)),
+            const SizedBox(height: 4),
+            Text(subtitle, style: TextStyle(color: color.withOpacity(0.7), fontSize: 10)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final int count;
   final Color color;
 
-  FlagTailPainter({required this.color});
+  const _SummaryRow({required this.icon, required this.label, required this.count, required this.color});
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.fill;
-
-    final path = Path()
-      ..moveTo(0, 0)
-      ..lineTo(size.width, size.height / 2)
-      ..lineTo(0, size.height)
-      ..close();
-
-    canvas.drawPath(path, paint);
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 24),
+          const SizedBox(width: 12),
+          Text(label, style: const TextStyle(color: Colors.white, fontSize: 16)),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text('$count', style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16)),
+          ),
+        ],
+      ),
+    );
   }
-
-  @override
-  bool shouldRepaint(covariant FlagTailPainter oldDelegate) => false;
 }
 
 // ============================================
 // CORNER PAINTER
 // ============================================
 
-class CornerPainter extends CustomPainter {
+class _CornerPainter extends CustomPainter {
   final Alignment alignment;
   final Color color;
   final double strokeWidth;
 
-  CornerPainter({
-    required this.alignment,
-    required this.color,
-    required this.strokeWidth,
-  });
+  _CornerPainter({required this.alignment, required this.color, required this.strokeWidth});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1446,11 +1194,11 @@ class CornerPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CornerPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _CornerPainter oldDelegate) => false;
 }
 
 // ============================================
-// STABLE DETECTION CLASS
+// DATA CLASS
 // ============================================
 
 class StableDetection {
