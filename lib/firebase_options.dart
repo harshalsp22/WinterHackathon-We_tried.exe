@@ -52,7 +52,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyAx4O8TWohwxHonJX41EMsNVgxhMbrGe2s',
-    appId: '1:337741082788:android:f2ebb2e259e8e8ae5cb631',
+    appId: '1:337741082788:android:a701f37a54af3e755cb631',
     messagingSenderId: '337741082788',
     projectId: 'arsenal-hardwarefix',
     storageBucket: 'arsenal-hardwarefix.firebasestorage.app',

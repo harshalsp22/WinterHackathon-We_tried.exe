@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:arsenal/Shared/chamfer_button.dart';
+import 'package:arsenal/Screens/device_info_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -22,6 +23,7 @@ class _HomeScreenState extends State<HomeScreen> {
       'G15 Gaming',
     ],
     'HP': [
+      '15s',
       'Pavilion 14',
       'Victus 16',
       'Omen 15',
@@ -123,6 +125,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     ? () {}
                     : () {
                   // TODO: Navigate to AR / diagnostics
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => DeviceInfoScreen(
+                        brand: selectedBrand!,
+                        model: selectedModel!,
+                      ),
+                    ),
+                  );
                   debugPrint(
                     'Selected: $selectedBrand - $selectedModel',
                   );
