@@ -1,12 +1,11 @@
 # =========================
-# Miscellaneous / OS
+# Miscellaneous
 # =========================
 *.class
 *.log
 *.pyc
 *.swp
 .DS_Store
-Thumbs.db
 .history/
 .svn/
 .swiftpm/
@@ -16,10 +15,12 @@ migrate_working_dir/
 # IDEs
 # =========================
 .idea/
-.vscode/
 *.iml
 *.ipr
 *.iws
+
+# Uncomment if you want VS Code settings ignored
+#.vscode/
 
 # =========================
 # Flutter / Dart
@@ -34,22 +35,11 @@ build/
 coverage/
 
 # =========================
-# Firebase / Secrets
-# =========================
-.env
-.env.*
-firebase.json
-.firebaserc
-google-services.json
-GoogleService-Info.plist
-
-# =========================
 # Android
 # =========================
 android/.gradle/
 android/local.properties
 android/key.properties
-android/app/build/
 android/**/GeneratedPluginRegistrant.java
 
 # =========================
@@ -58,14 +48,20 @@ android/**/GeneratedPluginRegistrant.java
 ios/Pods/
 ios/.symlinks/
 ios/Flutter/Flutter.framework
-ios/Flutter/App.framework
+ios/Flutter/Flutter.podspec
 ios/Flutter/Generated.xcconfig
-ios/Flutter/ephemeral/
+
 macos/Pods/
-macos/Flutter/ephemeral/
 
 # =========================
-# Desktop
+# Web
 # =========================
-windows/build/
-linux/build/
+web/.dart_tool/
+
+# =========================
+# Symbolication / Obfuscation
+# =========================
+app.*.symbols
+app.*.map.json
+
+.env
